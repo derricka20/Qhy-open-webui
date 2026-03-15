@@ -1,0 +1,102 @@
+name: ai-stack
+
+services:
+
+  vllm:
+    image: scitrera/dgx-spark-vllm:0.17.0-t5
+    container_name: vllm
+
+    restart: unless-stopped
+
+    ports:
+      - "8000:8000"
+
+    shm_size: "64gb"
+
+    volumes:
+      - /srv/vllm/cache:/workspace/.cache
+      - /srv/vllm/models:/models
+      - /srv/vllm/templates:/templates
+
+    environment:
+      HF_HOME: /models
+
+    entrypoint: python3
+
+    command: >
+      -m vllm.entrypoints.openai.api_server
+      --host 0.0.0.0
+      --port 8000
+      --model nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-NVFP4
+      --trust-remote-code
+      --async-scheduling
+      --dtype auto
+      --kv-cache-dtype fp8
+      --gpu-memory-utilization 0.66
+      --swap-space 0
+      --attention-backend TRITON_ATTN
+      --enable-chunked-prefill
+      --max-model-len 80000
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v1/models"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+    ipc: host
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+
+  webui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: open-webui
+
+    restart: unless-stopped
+
+    depends_on:
+      - vllm
+
+    ports:
+      - "8080:8080"
+
+    volumes:
+      - /srv/open-webui/data:/app/backend/data
+
+    environment:
+      WEBUI_AUTH: "True"
+      WEBUI_NAME: "AI Server"
+      ENABLE_SIGNUP: "True"
+
+      OPENAI_API_BASE_URL: http://vllm:8000/v1
+      OPENAI_API_KEY: sk-local
+
+      ENABLE_OLLAMA_API: "False"
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+
+networks:
+  default:
+    name: ai-network
